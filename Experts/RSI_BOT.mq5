@@ -173,12 +173,12 @@ bool CheckValidInputs()
     Alert("Your RSI level must be between 0 and 100");
     return true;
   }
-  if (InpStopLoss <= 0)
+  if (InpStopLoss < 0)
   {
     Alert("Your stop loss must be more than 0");
     return true;
   }
-  if (InpTakeProfit <= 0)
+  if (InpTakeProfit < 0)
   {
     Alert("Your take profit must be more than 0");
     return true;
