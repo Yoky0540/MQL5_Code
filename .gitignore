@@ -1,0 +1,13 @@
+.vscode
+Images
+Include
+Indicators
+Libraries
+Profiles
+Scripts
+experts.dat
+Experts/Advisors
+Experts/Examples
+Experts/Free Robots
+
+*.ex5
