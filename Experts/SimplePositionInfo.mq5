@@ -9,7 +9,7 @@
 //+------------------------------------------------------------------+
 //| Include path                                                     |
 //+------------------------------------------------------------------+
-#include <Trade\Trade.mqh>
+#include <Trade/Trade.mqh>
 
 //Create instance for CTrade
 CTrade trade;
