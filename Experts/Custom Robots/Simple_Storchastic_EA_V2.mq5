@@ -13,6 +13,21 @@
 #include <Trade/Trade.mqh>
 
 //+------------------------------------------------------------------+
+//| Global Variables Path                                            |
+//+------------------------------------------------------------------+
+int stochasticHandle;
+double stochasticBufferMain[];
+MqlTick currentTick;
+CTrade trade;
+enum SIGNAL_MODE
+{
+  EXIT_CROSS_NORMAL,    // Exit Cross Normal
+  ENTRY_CROSS_NORMAL,   // Entry Cross Normal
+  EXIT_CROSS_REVERSED,  // Exit Cross Reversed
+  ENTRY_CROSS_REVERSED, // Entry Cross Reversed
+};
+
+//+------------------------------------------------------------------+
 //| Input path                                                       |
 //+------------------------------------------------------------------+
 input group "=== General ===";
@@ -20,9 +35,10 @@ static input ulong InpMagicNumber = 546814; // Magic Number For Simple_Stochasti
 static input double InpLotSize = 0.01;      // Lot Size
 
 input group "=== Trading ===";
-input int InpStopLoss = 200;       // Stop loss in points (0 = off)
-input int InpTakeProfit = 0;       // Take profit in points (0 = off)
-input bool InpCloseSignal = false; // Close trades by opposite signal
+input SIGNAL_MODE InpSignalMode = EXIT_CROSS_NORMAL; // Signal Mode
+input int InpStopLoss = 200;                         // Stop loss in points (0 = off)
+input int InpTakeProfit = 0;                         // Take profit in points (0 = off)
+input bool InpCloseSignal = false;                   // Close trades by opposite signal
 
 input group "=== Stochastic ===";
 input int InpKPeriod = 9;    // %K Period
@@ -30,13 +46,9 @@ input int InpDPeriod = 3;    // %D Period
 input int InpSlowing = 3;    // Slowing
 input int InpStocLevel = 80; // Stochastic Level (Upper)
 
-//+------------------------------------------------------------------+
-//| Global Variables Path                                            |
-//+------------------------------------------------------------------+
-int stochasticHandle;
-double stochasticBufferMain[], stochasticBufferSignal[];
-MqlTick currentTick;
-CTrade trade;
+input group "=== Clear bar filter ===";
+input bool InpClearBarReversed = false; // Reversed clear bar filter
+input int InpClearBarNumber = 0;        // Clear bar number (0 = off)
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -90,8 +102,8 @@ void OnTick()
   }
 
   // get stochastic values
-  int stochasticValues = CopyBuffer(stochasticHandle, 0, 1, 2, stochasticBufferMain);
-  if (stochasticValues != 2)
+  int stochasticValues = CopyBuffer(stochasticHandle, 0, 0, 3 + InpClearBarNumber, stochasticBufferMain);
+  if (stochasticValues != (3 + InpClearBarNumber))
   {
     Print("Error getting Stochastic values");
     return;
@@ -106,9 +118,7 @@ void OnTick()
   }
 
   // check for buy position
-  bool isStochasticBuySignal = stochasticBufferMain[0] <= (100 - InpStocLevel) &&
-                               stochasticBufferMain[1] > (100 - InpStocLevel);
-  if (cntBuy == 0 && isStochasticBuySignal)
+  if (CheckSignal(true, cntBuy) && CheckClearBars(true))
   {
     Print("Buy Signal");
     if (InpCloseSignal)
@@ -132,9 +142,7 @@ void OnTick()
   }
 
   // check for sell position
-  bool isStochasticSellSignal = stochasticBufferMain[0] >= InpStocLevel &&
-                                stochasticBufferMain[1] < InpStocLevel;
-  if (cntSell == 0 && isStochasticSellSignal)
+  if (CheckSignal(false, cntSell) && CheckClearBars(false))
   {
     Print("Sell Signal");
     if (InpCloseSignal)
@@ -207,6 +215,13 @@ bool CheckInvalidInputs()
     Alert("Stop Loss must be more than 0 if Close Signal is false");
     return true;
   }
+
+  if (InpClearBarNumber < 0)
+  {
+    Alert("Clear bar number must be more than 0");
+    return true;
+  }
+
   return false;
 }
 
@@ -337,5 +352,97 @@ bool CheckClosePositions(int all_buy_sell)
     }
   }
   return true;
+}
+
+// Check for new signal
+bool CheckSignal(bool buy_sell, int cntBuySell)
+{
+
+  // return false if a position is open
+
+  if (cntBuySell > 0)
+  {
+    return false;
+  }
+
+  // check cross over
+  int lowerLevel = 100 - InpStocLevel;
+
+  bool upperExitCross = stochasticBufferMain[1] >= InpStocLevel && stochasticBufferMain[2] < InpStocLevel;
+  bool upperEntryCross = stochasticBufferMain[1] <= InpStocLevel && stochasticBufferMain[2] > InpStocLevel;
+
+  bool lowerExitCross = stochasticBufferMain[1] <= lowerLevel && stochasticBufferMain[2] > lowerLevel;
+  bool lowerEntryCross = stochasticBufferMain[1] >= lowerLevel && stochasticBufferMain[2] < lowerLevel;
+
+  // check signal
+  switch (InpSignalMode)
+  {
+  case EXIT_CROSS_NORMAL:
+    return ((buy_sell && lowerExitCross) || (!buy_sell && upperExitCross));
+  case ENTRY_CROSS_NORMAL:
+    return ((buy_sell && lowerEntryCross) || (!buy_sell && upperEntryCross));
+  case EXIT_CROSS_REVERSED:
+    return ((buy_sell && upperExitCross) || (!buy_sell && lowerExitCross));
+  case ENTRY_CROSS_REVERSED:
+    return ((buy_sell && upperEntryCross) || (!buy_sell && lowerEntryCross));
+    break;
+  }
+
+  return false;
+}
+
+// clear bar filter
+bool CheckClearBars(bool buy_sell)
+{
+
+  // return true if filter is active
+  if (InpClearBarNumber == 0)
+  {
+    return true;
+  }
+
+  bool checkCrossLower = ((buy_sell && (InpSignalMode == EXIT_CROSS_NORMAL || InpSignalMode == ENTRY_CROSS_NORMAL)) || (!buy_sell && (InpSignalMode == EXIT_CROSS_REVERSED || InpSignalMode == ENTRY_CROSS_REVERSED)));
+
+  for (int i = 3; i < (3 + InpClearBarNumber); i++)
+  {
+    // check upper level
+    if (!checkCrossLower && ((stochasticBufferMain[i - 1] > InpStocLevel && stochasticBufferMain[i] <= InpStocLevel) || (stochasticBufferMain[i - 1] <= InpStocLevel && stochasticBufferMain[i] > InpStocLevel)))
+    {
+      if (InpClearBarReversed)
+      {
+        return true;
+      }
+      else
+      {
+        Print("Clear bar filter prevent:", buy_sell ? "buy" : "sell", " signal. Cross over upper at index", string(i - 1), " -> ", (string)i);
+        return false;
+      }
+    }
+
+    // check lower level
+    if (checkCrossLower && ((stochasticBufferMain[i - 1] < (100 - InpStocLevel) && stochasticBufferMain[i] >= (100 - InpStocLevel)) || (stochasticBufferMain[i - 1] >= (100 - InpStocLevel) && stochasticBufferMain[i] < (100 - InpStocLevel))))
+    {
+      if (InpClearBarReversed)
+      {
+        return true;
+      }
+      else
+      {
+        Print("Clear bar filter prevent:", buy_sell ? "buy" : "sell", " signal. Cross over lower at index", string(i - 1), " -> ", (string)i);
+        return false;
+      }
+    }
+  }
+
+  if (InpClearBarReversed)
+  {
+    Print("Clear bar filter prevent:", buy_sell ? "buy" : "sell", " signal. No cross detected");
+    return false;
+  }
+  else
+  {
+    return true;
+  }
+
 }
 //+------------------------------------------------------------------+
